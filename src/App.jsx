@@ -14,6 +14,7 @@ export default function AcademicAgent() {
   const [uploadingSyllabus, setUploadingSyllabus] = useState(false);
   const chatContainerRef = React.useRef(null);
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
+  const [showWarning, setShowWarning] = useState(true);
 
   useEffect(() => {
     if (chatContainerRef.current && shouldAutoScroll) {
@@ -68,14 +69,16 @@ export default function AcademicAgent() {
   };
 
   useEffect(() => {
-    const load = async () => {
+    const load = () => {
       try {
-        const c = await window.storage.get('courses');
-        if (c && c.value) setCourses(JSON.parse(c.value));
-        const ctx = await window.storage.get('context');
-        if (ctx && ctx.value) setContext(JSON.parse(ctx.value));
-        const msgs = await window.storage.get('chatHistory');
-        if (msgs && msgs.value) setChatMessages(JSON.parse(msgs.value));
+        const coursesData = localStorage.getItem('courses');
+        if (coursesData) setCourses(JSON.parse(coursesData));
+        
+        const contextData = localStorage.getItem('context');
+        if (contextData) setContext(JSON.parse(contextData));
+        
+        const chatData = localStorage.getItem('chatHistory');
+        if (chatData) setChatMessages(JSON.parse(chatData));
       } catch (err) {
         console.error('Load error:', err);
       }
@@ -85,12 +88,20 @@ export default function AcademicAgent() {
 
   const save = (c) => {
     setCourses(c);
-    window.storage.set('courses', JSON.stringify(c)).catch(() => {});
+    try {
+      localStorage.setItem('courses', JSON.stringify(c));
+    } catch (err) {
+      console.error('Save error:', err);
+    }
   };
 
   const saveCtx = (c) => {
     setContext(c);
-    window.storage.set('context', JSON.stringify(c)).catch(() => {});
+    try {
+      localStorage.setItem('context', JSON.stringify(c));
+    } catch (err) {
+      console.error('Save error:', err);
+    }
   };
 
   const addCourse = (name, grade) => {
@@ -222,7 +233,11 @@ export default function AcademicAgent() {
       const cleanMessage = assistantMessage.replace(/\[ACTION:.*?\]/g, '').trim();
       const updatedMessages = [...newMessages, { role: 'assistant', content: cleanMessage }];
       setChatMessages(updatedMessages);
-      window.storage.set('chatHistory', JSON.stringify(updatedMessages)).catch(() => {});
+      try {
+        localStorage.setItem('chatHistory', JSON.stringify(updatedMessages));
+      } catch (err) {
+        console.error('Save chat error:', err);
+      }
     } catch (e) {
       console.error(e);
       setChatMessages([...newMessages, { role: 'assistant', content: 'Sorry, I encountered an error. Please try again.' }]);
@@ -374,6 +389,34 @@ export default function AcademicAgent() {
           </h1>
           <p className="text-purple-300">Smart academic advisor with AI-powered features</p>
         </div>
+
+        {showWarning && (
+          <div className="bg-yellow-500/20 border-2 border-yellow-500/50 rounded-xl p-4 mb-6 relative">
+            <button 
+              onClick={() => setShowWarning(false)}
+              className="absolute top-2 right-2 text-yellow-300 hover:text-yellow-100"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <div className="flex items-start gap-3">
+              <div className="text-3xl">💡</div>
+              <div>
+                <h3 className="text-yellow-100 font-bold text-lg mb-1">Important: Your Data is Saved Locally</h3>
+                <p className="text-yellow-200 text-sm mb-2">
+                  Your courses and assignments are saved in your browser on THIS device. Your data will persist between sessions, but:
+                </p>
+                <ul className="text-yellow-200 text-sm space-y-1 ml-4">
+                  <li>• <strong>Don't use Incognito/Private mode</strong> - your data will be deleted when you close the window</li>
+                  <li>• <strong>Avoid clearing browser data</strong> - this will delete all your courses and assignments</li>
+                  <li>• <strong>Data is device-specific</strong> - using a different device or browser starts fresh</li>
+                </ul>
+                <p className="text-yellow-200 text-sm mt-2 italic">
+                  💾 Tip: Take screenshots or notes of important assignments as backup!
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="flex gap-2 mb-6 bg-white/5 rounded-xl p-2 border border-purple-500/30">
           {[['overview', 'Overview'], ['grades', 'Grades'], ['calendar', 'Calendar'], ['context', 'Context']].map(([t, l]) => (
