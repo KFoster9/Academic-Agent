@@ -58,7 +58,12 @@ export default function AcademicAgent() {
       });
 
       if (!res.ok) {
-        throw new Error('API returned status ' + res.status);
+        let detail = '';
+        try {
+          const errBody = await res.json();
+          detail = errBody?.error?.message || '';
+        } catch (e) {}
+        throw new Error('API returned status ' + res.status + (detail ? (': ' + detail) : ''));
       }
 
       const data = await res.json();
@@ -221,7 +226,12 @@ export default function AcademicAgent() {
       });
 
       if (!res.ok) {
-        throw new Error('API returned status ' + res.status);
+        let detail = '';
+        try {
+          const errBody = await res.json();
+          detail = errBody?.error?.message || '';
+        } catch (e) {}
+        throw new Error('API returned status ' + res.status + (detail ? (': ' + detail) : ''));
       }
       
       const data = await res.json();
@@ -255,7 +265,7 @@ export default function AcademicAgent() {
       }
     } catch (e) {
       console.error(e);
-      setChatMessages([...newMessages, { role: 'assistant', content: 'Sorry, I encountered an error. Please try again.' }]);
+      setChatMessages([...newMessages, { role: 'assistant', content: 'Sorry, I encountered an error: ' + (e?.message || 'unknown error') + '. Please try again.' }]);
     }
     
     setChatLoading(false);
@@ -326,7 +336,12 @@ export default function AcademicAgent() {
       });
 
       if (!res.ok) {
-        throw new Error('API returned status ' + res.status);
+        let detail = '';
+        try {
+          const errBody = await res.json();
+          detail = errBody?.error?.message || '';
+        } catch (e) {}
+        throw new Error('API returned status ' + res.status + (detail ? (': ' + detail) : ''));
       }
       
       const d = await res.json();
