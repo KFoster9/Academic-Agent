@@ -15,6 +15,13 @@ export default function AcademicAgent() {
   const chatContainerRef = React.useRef(null);
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
   const [showWarning, setShowWarning] = useState(true);
+  const [showBetaBanner, setShowBetaBanner] = useState(true);
+  const [toast, setToast] = useState(null);
+
+  const showToast = (message, type = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 4000);
+  };
 
   useEffect(() => {
     if (chatContainerRef.current && shouldAutoScroll) {
@@ -37,11 +44,11 @@ export default function AcademicAgent() {
     try {
       const text = await file.text();
       
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
+      const res = await fetch('/.netlify/functions/ai-proxy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
+          // model is set server-side in netlify/functions/ai-proxy.js
           max_tokens: 2000,
           messages: [{
             role: 'user',
@@ -49,7 +56,11 @@ export default function AcademicAgent() {
           }]
         })
       });
-      
+
+      if (!res.ok) {
+        throw new Error('API returned status ' + res.status);
+      }
+
       const data = await res.json();
       const extractedInfo = data.content[0].text;
       
@@ -58,10 +69,10 @@ export default function AcademicAgent() {
       const updatedSyllabi = currentSyllabi + separator + extractedInfo;
       
       saveCtx({ ...context, syllabi: updatedSyllabi });
-      alert('Syllabus uploaded and parsed successfully!');
+      showToast('Syllabus uploaded and parsed successfully!', 'success');
     } catch (err) {
       console.error('Upload error:', err);
-      alert('Error uploading syllabus. Please try again.');
+      showToast('Error uploading syllabus. Please try again.', 'error');
     }
     
     setUploadingSyllabus(false);
@@ -105,11 +116,11 @@ export default function AcademicAgent() {
   };
 
   const addCourse = (name, grade) => {
-    save([...courses, { id: Date.now(), name, currentGrade: Number(grade) || 0, assignments: [] }]);
+    save([...courses, { id: crypto.randomUUID(), name, currentGrade: Number(grade) || 0, assignments: [] }]);
   };
 
   const addAssignment = (cid, name, date, weight) => {
-    save(courses.map(c => c.id === cid ? { ...c, assignments: [...c.assignments, { id: Date.now(), name, dueDate: date, weight: Number(weight), status: 'not_started', score: null }] } : c));
+    save(courses.map(c => c.id === cid ? { ...c, assignments: [...c.assignments, { id: crypto.randomUUID(), name, dueDate: date, weight: Number(weight), status: 'not_started', score: null }] } : c));
   };
 
   const updateStatus = (cid, aid, status) => {
@@ -198,16 +209,20 @@ export default function AcademicAgent() {
         content: msg.content
       }));
       
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
+      const res = await fetch('/.netlify/functions/ai-proxy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
+          // model is set server-side in netlify/functions/ai-proxy.js
           max_tokens: 1000,
           system: systemPrompt,
           messages: conversationHistory
         })
       });
+
+      if (!res.ok) {
+        throw new Error('API returned status ' + res.status);
+      }
       
       const data = await res.json();
       const assistantMessage = data.content[0].text;
@@ -300,15 +315,19 @@ export default function AcademicAgent() {
       
       const promptContent = 'You are an expert academic advisor. Today is ' + todayStr + '.\n\nSEMESTER OVERVIEW:\n- Total Assignments: ' + totalAssignments + '\n- Completed: ' + completedCount + '\n- Remaining: ' + (totalAssignments - completedCount) + '\n\nSTUDENT SCHEDULE:\n' + scheduleText + '\n\nSYLLABUS INFORMATION:\n' + syllabiText + '\n\nPENDING ASSIGNMENTS:\n' + pendingText + '\n\nINSTRUCTIONS:\n1. GRADE IMPACT: Use exact numbers from data\n2. TIME ESTIMATES: Provide hours for each assignment\n3. WORKLOAD BALANCE: Identify light/heavy weeks\n4. DEPENDENCIES: Show which assignments build on each other\n5. PREVENTION: Provide specific dates to start early\n6. OFFICE HOURS: Check schedule conflicts\n7. EXTRA CREDIT: Rank by ROI\n8. SEMESTER STRATEGY: Explain current phase\n\nRespond with JSON only (no markdown):\n{\n  "top": "Assignment with due date",\n  "reason": "Why priority with time estimate",\n  "gradeImpact": "Exact calculations",\n  "comparative": "Compare top priorities",\n  "nextWeeks": "List 4-6 upcoming",\n  "leverage": "Top 3 highest-impact",\n  "today": "Action for TODAY",\n  "schedule": "Reference time blocks",\n  "office": "Office hours",\n  "extra": "Extra credit by ROI",\n  "risks": ["Risks with prevention"],\n  "workloadBalance": "Weekly analysis",\n  "dependencies": "Assignment order",\n  "semesterStrategy": "Phase context",\n  "cushionTracking": "Performance tracking"\n}';
       
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
+      const res = await fetch('/.netlify/functions/ai-proxy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
+          // model is set server-side in netlify/functions/ai-proxy.js
           max_tokens: 4000,
           messages: [{ role: 'user', content: promptContent }]
         })
       });
+
+      if (!res.ok) {
+        throw new Error('API returned status ' + res.status);
+      }
       
       const d = await res.json();
       
@@ -382,6 +401,11 @@ export default function AcademicAgent() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-6">
+      {toast && (
+        <div className={'fixed top-6 right-6 z-50 rounded-xl px-5 py-3 border-2 shadow-2xl ' + (toast.type === 'error' ? 'bg-red-900/90 border-red-500/50' : 'bg-purple-900/90 border-purple-500/50')}>
+          <p className={toast.type === 'error' ? 'text-red-200 text-sm font-medium' : 'text-purple-100 text-sm font-medium'}>{toast.message}</p>
+        </div>
+      )}
       <div className="max-w-6xl mx-auto">
         <div className="text-center mb-6">
           <h1 className="text-4xl font-bold text-white flex items-center justify-center gap-3">
@@ -390,10 +414,32 @@ export default function AcademicAgent() {
           <p className="text-purple-300">Smart academic advisor with AI-powered features</p>
         </div>
 
+        {showBetaBanner && (
+          <div className="bg-purple-500/10 border-2 border-purple-500/30 rounded-xl p-4 mb-4 relative">
+            <button
+              onClick={() => setShowBetaBanner(false)}
+              aria-label="Dismiss beta notice"
+              className="absolute top-3 right-3 text-purple-300 hover:text-white"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <div className="flex items-start gap-3 pr-6">
+              <div className="text-purple-300 text-lg">✦</div>
+              <div>
+                <h3 className="text-purple-200 font-semibold text-sm mb-1">You're on Beta v1</h3>
+                <p className="text-purple-300 text-sm leading-relaxed">
+                  Core planning, grade tracking, and AI recommendations are live. A few features are marked "Coming Soon" as we roll out the next update.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {showWarning && (
           <div className="bg-yellow-500/20 border-2 border-yellow-500/50 rounded-xl p-4 mb-6 relative">
             <button 
               onClick={() => setShowWarning(false)}
+              aria-label="Dismiss storage warning"
               className="absolute top-2 right-2 text-yellow-300 hover:text-yellow-100"
             >
               <X className="w-5 h-5" />
@@ -577,6 +623,13 @@ export default function AcademicAgent() {
               ) : <p className="text-purple-300 text-center py-8">Add courses to get started</p>}
             </div>
 
+            <div className="bg-white/10 rounded-xl p-6 border border-purple-500/30 flex flex-col items-center justify-center text-center gap-2 min-h-[160px]">
+              <div className="w-11 h-11 rounded-xl bg-purple-500/10 border border-purple-500/25 flex items-center justify-center text-purple-200 text-lg">🔒</div>
+              <h3 className="font-semibold text-white text-base">Study Group Sync</h3>
+              <p className="text-purple-300 text-sm max-w-xs">Coordinate study blocks with classmates automatically.</p>
+              <span className="mt-1 text-[10px] font-semibold tracking-wide uppercase text-purple-200 bg-purple-500/10 border border-purple-500/30 rounded-full px-3 py-1">Coming Soon</span>
+            </div>
+
             <AddCourseForm onAdd={addCourse} />
             
             <div className="space-y-4">
@@ -681,7 +734,7 @@ export default function AcademicAgent() {
                 <Brain className="w-5 h-5 text-white" />
                 <h3 className="font-bold text-white">Academic Agent</h3>
               </div>
-              <button onClick={() => setChatOpen(false)} className="text-white hover:text-gray-200">
+              <button onClick={() => setChatOpen(false)} aria-label="Close chat" className="text-white hover:text-gray-200">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -789,12 +842,19 @@ function AddCourseForm({ onAdd }) {
 
 function CourseCard({ course, onAddAssignment, onUpdateStatus, onUpdateScore, onDelete, onDeleteAssignment }) {
   const [show, setShow] = useState(false);
+  const totalWeight = course.assignments.reduce((sum, a) => sum + (Number(a.weight) || 0), 0);
   return (
     <div className="bg-white/10 rounded-xl p-6 border border-purple-500/30">
       <div className="flex justify-between mb-4">
         <h2 className="text-2xl font-bold text-white">{course.name}</h2>
-        <button onClick={() => onDelete(course.id)} className="text-red-400 hover:text-red-300"><X className="w-5 h-5" /></button>
+        <button onClick={() => onDelete(course.id)} aria-label={'Delete ' + course.name} className="text-red-400 hover:text-red-300"><X className="w-5 h-5" /></button>
       </div>
+
+      {course.assignments.length > 0 && Math.round(totalWeight) !== 100 && (
+        <div className="mb-4 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs">
+          Assignment weights total {Math.round(totalWeight)}%, not 100% — grade calculations for this course may not reflect your actual syllabus breakdown.
+        </div>
+      )}
       
       {course.assignments.map(a => (
         <div key={a.id} className="bg-white/5 rounded-lg p-4 mb-3 border border-purple-500/20 hover:bg-white/10 transition-all">
@@ -803,7 +863,7 @@ function CourseCard({ course, onAddAssignment, onUpdateStatus, onUpdateScore, on
               <h3 className="text-white font-semibold">{a.name}</h3>
               <p className="text-purple-300 text-sm">{new Date(a.dueDate).toLocaleDateString()} | {a.weight}%</p>
             </div>
-            <button onClick={() => onDeleteAssignment(course.id, a.id)} className="text-red-400 hover:text-red-300"><X className="w-4 h-4" /></button>
+            <button onClick={() => onDeleteAssignment(course.id, a.id)} aria-label={'Delete ' + a.name} className="text-red-400 hover:text-red-300"><X className="w-4 h-4" /></button>
           </div>
           <div className="flex gap-2">
             <select value={a.status} onChange={(e) => onUpdateStatus(course.id, a.id, e.target.value)} className="bg-purple-600/30 text-white px-3 py-1 rounded text-sm border border-purple-500/30">
@@ -881,20 +941,23 @@ function HoverCard({ icon, title, preview, content, gradient, pulse }) {
 }
 
 function CalendarView({ courses, context }) {
+  const getWeekStart = (date) => {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - d.getDay());
+    return d;
+  };
+  const todayDate = new Date();
+  const thisWeekStart = getWeekStart(todayDate);
+
   const [selectedWeek, setSelectedWeek] = useState(0);
   const [hoveredBlock, setHoveredBlock] = useState(null);
   
-  const semesterStart = new Date('2026-01-16');
   const allAssignments = courses.flatMap(c => c.assignments.map(a => ({ ...a, course: c.name })));
   
-  const weeks = [];
-  for (let i = 0; i < 16; i++) {
-    const weekStart = new Date(semesterStart);
-    weekStart.setDate(semesterStart.getDate() + (i * 7));
-    weeks.push(weekStart);
-  }
+  const currentWeekStart = new Date(thisWeekStart);
+  currentWeekStart.setDate(thisWeekStart.getDate() + (selectedWeek * 7));
   
-  const currentWeekStart = weeks[selectedWeek];
   const days = [];
   for (let i = 0; i < 7; i++) {
     const day = new Date(currentWeekStart);
@@ -993,9 +1056,14 @@ function CalendarView({ courses, context }) {
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
-        <button onClick={() => setSelectedWeek(Math.max(0, selectedWeek - 1))} disabled={selectedWeek === 0} className="bg-purple-600 disabled:bg-gray-600 text-white px-4 py-2 rounded-lg transition-all hover:scale-105">← Prev</button>
-        <h3 className="text-lg font-bold text-white">Week of {currentWeekStart.toLocaleDateString()}</h3>
-        <button onClick={() => setSelectedWeek(Math.min(15, selectedWeek + 1))} disabled={selectedWeek === 15} className="bg-purple-600 disabled:bg-gray-600 text-white px-4 py-2 rounded-lg transition-all hover:scale-105">Next →</button>
+        <button onClick={() => setSelectedWeek(Math.max(-8, selectedWeek - 1))} disabled={selectedWeek === -8} className="bg-purple-600 disabled:bg-gray-600 text-white px-4 py-2 rounded-lg transition-all hover:scale-105">← Prev</button>
+        <div className="flex flex-col items-center">
+          <h3 className="text-lg font-bold text-white">Week of {currentWeekStart.toLocaleDateString()}</h3>
+          {selectedWeek !== 0 && (
+            <button onClick={() => setSelectedWeek(0)} className="text-xs text-purple-300 hover:text-white underline mt-1">Jump to This Week</button>
+          )}
+        </div>
+        <button onClick={() => setSelectedWeek(Math.min(16, selectedWeek + 1))} disabled={selectedWeek === 16} className="bg-purple-600 disabled:bg-gray-600 text-white px-4 py-2 rounded-lg transition-all hover:scale-105">Next →</button>
       </div>
       
       <div className="bg-white/5 rounded-xl p-4 border border-purple-500/20 overflow-x-auto">
@@ -1003,9 +1071,13 @@ function CalendarView({ courses, context }) {
           <div className="text-purple-300 text-xs font-bold p-2">Time</div>
           {days.map((day, i) => {
             const dueToday = getAssignmentsForDay(day);
+            const isToday = day.toDateString() === todayDate.toDateString();
             return (
-              <div key={i} className="text-center p-2">
-                <div className="font-bold text-white">{day.toLocaleDateString('en-US', { weekday: 'short' })}</div>
+              <div key={i} className={'text-center p-2 rounded-lg' + (isToday ? ' bg-purple-500/15 ring-1 ring-inset ring-purple-400/50' : '')}>
+                <div className={'font-bold ' + (isToday ? 'text-purple-200' : 'text-white')}>
+                  {day.toLocaleDateString('en-US', { weekday: 'short' })}
+                  {isToday && <span className="ml-1.5 text-[10px] align-middle bg-purple-500 text-white px-1.5 py-0.5 rounded-full">Today</span>}
+                </div>
                 <div className="text-xs text-purple-300">{day.getMonth() + 1 + '/' + day.getDate()}</div>
                 {dueToday.length > 0 && (
                   <div className="mt-1 space-y-1">
