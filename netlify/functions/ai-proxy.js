@@ -1,4 +1,4 @@
-// Serverless proxy: keeps GROQ_API_KEY server-side (never sent to the browser)
+// Serverless proxy: keeps AGENTBRAINKEY server-side (never sent to the browser)
 // and translates between the app's request/response shape and Groq's
 // OpenAI-compatible chat completions API, so App.jsx doesn't need to change
 // its parsing logic (data.content[0].text) if the provider changes again later.
@@ -10,10 +10,10 @@ export const handler = async (event) => {
     return { statusCode: 405, body: JSON.stringify({ error: { message: 'Method not allowed' } }) };
   }
 
-  if (!process.env.GROQ_API_KEY) {
+  if (!process.env.AGENTBRAINKEY) {
     return {
       statusCode: 500,
-      body: JSON.stringify({ error: { message: 'GROQ_API_KEY is not set in this site\'s environment variables.' } })
+      body: JSON.stringify({ error: { message: 'AGENTBRAINKEY is not set in this site\'s environment variables.' } })
     };
   }
 
@@ -39,7 +39,7 @@ export const handler = async (event) => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + process.env.GROQ_API_KEY
+        'Authorization': 'Bearer ' + process.env.AGENTBRAINKEY
       },
       body: JSON.stringify({
         model: GROQ_MODEL,
