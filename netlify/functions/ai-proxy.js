@@ -3,7 +3,7 @@
 // OpenAI-compatible chat completions API, so App.jsx doesn't need to change
 // its parsing logic (data.content[0].text) if the provider changes again later.
 
-const GROQ_MODEL = 'llama-3.3-70b-versatile';
+const GROQ_MODEL = 'openai/gpt-oss-120b';
 
 export const handler = async (event) => {
   if (event.httpMethod !== 'POST') {
