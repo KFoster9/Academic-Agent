@@ -271,9 +271,28 @@ export default function AcademicAgent() {
     setChatLoading(false);
   };
 
+  const getWeekStart = (date) => {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - d.getDay());
+    return d;
+  };
+
+  const fmtShort = (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+  const weekLabel = (dateStr, thisWeekStart) => {
+    const target = getWeekStart(new Date(dateStr));
+    const diffDays = Math.round((target - thisWeekStart) / 864e5);
+    const weekNum = Math.floor(diffDays / 7) + 1;
+    const end = new Date(target);
+    end.setDate(target.getDate() + 6);
+    return 'Week ' + weekNum + ' (' + fmtShort(target) + '\u2013' + fmtShort(end) + ')';
+  };
+
   const getRecs = async () => {
     setLoading(true);
     const today = new Date();
+    const thisWeekStart = getWeekStart(today);
     const pending = courses.flatMap(c => c.assignments.filter(a => a.status !== 'completed').map(a => {
       const imp = calcImpact(c, a);
       const daysUntil = Math.ceil((new Date(a.dueDate) - today) / 864e5);
@@ -281,6 +300,7 @@ export default function AcademicAgent() {
         course: c.name,
         name: a.name,
         due: a.dueDate,
+        weekLabel: weekLabel(a.dueDate, thisWeekStart),
         weight: a.weight,
         days: daysUntil,
         currentGrade: imp.current,
@@ -295,19 +315,19 @@ export default function AcademicAgent() {
       setRecs({ 
         top: 'All done!', 
         reason: 'No pending assignments', 
-        gradeImpact: '',
+        gradeImpactData: null,
         comparative: '',
-        nextWeeks: '',
+        nextWeeks: [],
         today: '',
-        schedule: '',
+        schedule: [],
         office: '',
         extra: '',
         risks: [],
-        leverage: '',
-        workloadBalance: '',
-        dependencies: '',
-        semesterStrategy: '',
-        cushionTracking: ''
+        leverage: [],
+        workloadBalance: [],
+        dependencies: [],
+        semesterStrategy: [],
+        cushionTracking: []
       });
       setLoading(false);
       return;
@@ -319,18 +339,48 @@ export default function AcademicAgent() {
       const completedCount = allAssignments.filter(a => a.status === 'completed').length;
       
       const scheduleText = context.schedule || 'No schedule provided';
-      const syllabiText = context.syllabi ? context.syllabi.substring(0, 2000) : 'No syllabi provided';
+      const hasSyllabus = !!context.syllabi;
+      const syllabiText = hasSyllabus ? context.syllabi.substring(0, 2000) : 'No syllabus uploaded for this course yet.';
       const pendingText = JSON.stringify(pending.slice(0, 15), null, 2);
       const todayStr = today.toLocaleDateString();
+      const lastDue = pending.reduce((max, a) => new Date(a.due) > new Date(max) ? a.due : max, pending[0].due);
+      const lastWeekLabel = weekLabel(lastDue, thisWeekStart);
       
-      const promptContent = 'You are an expert academic advisor. Today is ' + todayStr + '.\n\nSEMESTER OVERVIEW:\n- Total Assignments: ' + totalAssignments + '\n- Completed: ' + completedCount + '\n- Remaining: ' + (totalAssignments - completedCount) + '\n\nSTUDENT SCHEDULE:\n' + scheduleText + '\n\nSYLLABUS INFORMATION:\n' + syllabiText + '\n\nPENDING ASSIGNMENTS:\n' + pendingText + '\n\nINSTRUCTIONS:\n1. GRADE IMPACT: Use exact numbers from data\n2. TIME ESTIMATES: Provide hours for each assignment\n3. WORKLOAD BALANCE: Identify light/heavy weeks\n4. DEPENDENCIES: Show which assignments build on each other\n5. PREVENTION: Provide specific dates to start early\n6. OFFICE HOURS: Check schedule conflicts\n7. EXTRA CREDIT: Rank by ROI\n8. SEMESTER STRATEGY: Explain current phase\n\nRespond with JSON only (no markdown):\n{\n  "top": "Assignment with due date",\n  "reason": "Why priority with time estimate",\n  "gradeImpact": "Exact calculations",\n  "comparative": "Compare top priorities",\n  "nextWeeks": "List 4-6 upcoming",\n  "leverage": "Top 3 highest-impact",\n  "today": "Action for TODAY",\n  "schedule": "Reference time blocks",\n  "office": "Office hours",\n  "extra": "Extra credit by ROI",\n  "risks": ["Risks with prevention"],\n  "workloadBalance": "Weekly analysis",\n  "dependencies": "Assignment order",\n  "semesterStrategy": "Phase context",\n  "cushionTracking": "Performance tracking"\n}';
+      const promptContent = 'You are an expert academic advisor. Today is ' + todayStr + ' (' + weekLabel(today.toISOString(), thisWeekStart) + ').\n\n' +
+        'SEMESTER OVERVIEW:\n- Total Assignments: ' + totalAssignments + '\n- Completed: ' + completedCount + '\n- Remaining: ' + (totalAssignments - completedCount) + '\n- Planning horizon: today through ' + lastWeekLabel + ' (the last currently-known due date)\n\n' +
+        'STUDENT SCHEDULE:\n' + scheduleText + '\n\n' +
+        'SYLLABUS INFORMATION (' + (hasSyllabus ? 'provided' : 'NONE PROVIDED') + '):\n' + syllabiText + '\n\n' +
+        'PENDING ASSIGNMENTS (includes pre-calculated week labels and exact grade-scenario numbers \u2014 use these values exactly, do not recompute):\n' + pendingText + '\n\n' +
+        'CRITICAL RULES:\n' +
+        '1. WEEKS: Every pending assignment above already has a "weekLabel" field like "Week 3 (Sep 2\u2013Sep 8)". Always reuse these exact labels for any week reference. Never invent, calculate, or use absolute calendar week numbers (like "Week 34") \u2014 only the relative labels provided.\n' +
+        '2. GRADE MATH: Do not calculate or mention grade percentages yourself \u2014 that is handled separately by the app using the exact if100/if90/if80/if70 numbers already in the data. Do not include grade math in any of your text fields.\n' +
+        '3. NO FABRICATION: If SYLLABUS INFORMATION says "NONE PROVIDED", do not invent specific office hours, policies, or extra-credit opportunities. Instead say plainly that no syllabus has been uploaded yet for that course. Only state specifics that appear in the syllabus text above.\n' +
+        '4. PLANNING HORIZON: "nextWeeks" should cover every week from today through the planning horizon above (not just 2 weeks), so it reflects the whole current stretch of the semester with known deadlines.\n\n' +
+        'Respond with JSON only (no markdown, no code fences):\n' +
+        '{\n' +
+        '  "top": "Assignment name and due date",\n' +
+        '  "reason": "Why this is priority \u2014 urgency and effort, no grade math",\n' +
+        '  "comparative": "Brief comparison to the next 1-2 highest-priority items, no grade math",\n' +
+        '  "nextWeeks": [{"week": "exact weekLabel from data", "tasks": ["short task (Xh)", "short task (Xh)"]}],\n' +
+        '  "leverage": [{"item": "assignment name", "why": "one short sentence"}],\n' +
+        '  "today": "One concrete action for today, with a time estimate",\n' +
+        '  "schedule": [{"day": "Monday", "date": "exact date like Aug 19", "time": "7:00 PM\u20139:00 PM", "task": "what to work on"}] (cover the FULL planning horizon above with 1-2 blocks per week, not just the immediate week \u2014 this populates the calendar across the whole semester),\n' +
+        '  "office": "Office hours info FROM THE SYLLABUS ONLY, or a plain note that none was provided",\n' +
+        '  "extra": "Extra credit FROM THE SYLLABUS ONLY, or a plain note that none was provided",\n' +
+        '  "risks": ["short risk with a one-line prevention tip"],\n' +
+        '  "workloadBalance": [{"period": "exact weekLabel or range of weekLabels", "load": "light|moderate|heavy", "note": "why, one short sentence"}],\n' +
+        '  "dependencies": [{"from": "assignment or task", "to": "assignment it feeds into", "note": "one short sentence"}],\n' +
+        '  "semesterStrategy": [{"phase": "Phase 1", "weeks": "weekLabel range", "focus": "one short sentence"}],\n' +
+        '  "cushionTracking": ["one short, concrete tip \u2014 e.g. how much buffer the student currently has, or a specific early-warning sign to watch for. NOT generic advice like \\"make a spreadsheet\\" \u2014 the app already has a Grades tab that tracks this precisely, so these tips should add insight, not suggest rebuilding that."]\n' +
+        '}';
       
       const res = await fetch('/.netlify/functions/ai-proxy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           // model is set server-side in netlify/functions/ai-proxy.js
-          max_tokens: 4000,
+          max_tokens: 6000,
+          // widened schedule coverage needs more room than a single week did
           messages: [{ role: 'user', content: promptContent }]
         })
       });
@@ -352,19 +402,19 @@ export default function AcademicAgent() {
         setRecs({ 
           top: 'Error', 
           reason: errorMessage,
-          gradeImpact: '',
+          gradeImpactData: null,
           comparative: '',
-          nextWeeks: '',
+          nextWeeks: [],
           today: '',
-          schedule: '',
+          schedule: [],
           office: '',
           extra: '',
           risks: [],
-          leverage: '',
-          workloadBalance: '',
-          dependencies: '',
-          semesterStrategy: '',
-          cushionTracking: ''
+          leverage: [],
+          workloadBalance: [],
+          dependencies: [],
+          semesterStrategy: [],
+          cushionTracking: []
         });
         setLoading(false);
         return;
@@ -372,23 +422,38 @@ export default function AcademicAgent() {
       
       const text = d.content[0].text.trim().replace(/```json\n?/g, '').replace(/```\n?/g, '');
       const parsedRecs = JSON.parse(text);
+
+      // Match the AI's chosen top-priority assignment back to our own exact,
+      // pre-calculated grade numbers. The AI never computes grade math itself.
+      const topMatch = pending.find(p => parsedRecs.top && parsedRecs.top.toLowerCase().includes(p.name.toLowerCase()));
+      const gradeImpactData = topMatch ? {
+        assignment: topMatch.name,
+        weight: topMatch.weight,
+        scenarios: [
+          { score: 100, grade: topMatch.if100 },
+          { score: 90, grade: topMatch.if90 },
+          { score: 80, grade: topMatch.if80 },
+          { score: 70, grade: topMatch.if70 }
+        ]
+      } : null;
       
+      const scheduleArr = Array.isArray(parsedRecs.schedule) ? parsedRecs.schedule : [];
       setRecs({
         top: parsedRecs.top || 'No priority',
         reason: parsedRecs.reason || '',
-        gradeImpact: parsedRecs.gradeImpact || '',
+        gradeImpactData,
         comparative: parsedRecs.comparative || '',
-        nextWeeks: parsedRecs.nextWeeks || '',
-        leverage: parsedRecs.leverage || '',
+        nextWeeks: Array.isArray(parsedRecs.nextWeeks) ? parsedRecs.nextWeeks : [],
+        leverage: Array.isArray(parsedRecs.leverage) ? parsedRecs.leverage : [],
         today: parsedRecs.today || '',
-        schedule: parsedRecs.schedule || '',
+        schedule: scheduleArr,
         office: parsedRecs.office || '',
         extra: parsedRecs.extra || '',
         risks: parsedRecs.risks || [],
-        workloadBalance: parsedRecs.workloadBalance || '',
-        dependencies: parsedRecs.dependencies || '',
-        semesterStrategy: parsedRecs.semesterStrategy || '',
-        cushionTracking: parsedRecs.cushionTracking || ''
+        workloadBalance: Array.isArray(parsedRecs.workloadBalance) ? parsedRecs.workloadBalance : [],
+        dependencies: Array.isArray(parsedRecs.dependencies) ? parsedRecs.dependencies : [],
+        semesterStrategy: Array.isArray(parsedRecs.semesterStrategy) ? parsedRecs.semesterStrategy : [],
+        cushionTracking: Array.isArray(parsedRecs.cushionTracking) ? parsedRecs.cushionTracking : []
       });
     } catch (e) {
       console.error('Recommendation Error:', e);
@@ -396,19 +461,19 @@ export default function AcademicAgent() {
       setRecs({ 
         top: 'Error generating recommendations', 
         reason: errorMsg,
-        gradeImpact: '',
+        gradeImpactData: null,
         comparative: '',
-        nextWeeks: '',
+        nextWeeks: [],
         today: '',
-        schedule: '',
+        schedule: [],
         office: '',
         extra: '',
         risks: [],
-        leverage: '',
-        workloadBalance: '',
-        dependencies: '',
-        semesterStrategy: '',
-        cushionTracking: ''
+        leverage: [],
+        workloadBalance: [],
+        dependencies: [],
+        semesterStrategy: [],
+        cushionTracking: []
       });
     }
     setLoading(false);
@@ -505,12 +570,22 @@ export default function AcademicAgent() {
                     pulse={true}
                   />
                   
-                  {recs.gradeImpact && (
+                  {recs.gradeImpactData && (
                     <HoverCard 
                       icon="📊" 
                       title="Grade Impact" 
                       preview="Score scenarios"
-                      content={recs.gradeImpact}
+                      content={
+                        <div>
+                          <p className="mb-3 text-white/90">{recs.gradeImpactData.assignment} <span className="text-gray-400">({recs.gradeImpactData.weight}% of course grade)</span></p>
+                          {recs.gradeImpactData.scenarios.map((s, i) => (
+                            <div key={i} className="flex justify-between mb-1.5 text-sm">
+                              <span className="text-gray-300">If you score {s.score}%</span>
+                              <span className="font-semibold text-white">your grade becomes {s.grade}%</span>
+                            </div>
+                          ))}
+                        </div>
+                      }
                       gradient="from-green-600 to-emerald-800"
                     />
                   )}
@@ -525,22 +600,42 @@ export default function AcademicAgent() {
                     />
                   )}
 
-                  {recs.nextWeeks && (
+                  {recs.nextWeeks && recs.nextWeeks.length > 0 && (
                     <HoverCard 
                       icon="📅" 
-                      title="Next 2 Weeks" 
-                      preview="Upcoming deadlines"
-                      content={recs.nextWeeks}
+                      title="Upcoming Weeks" 
+                      preview="Week-by-week plan"
+                      content={
+                        <div>
+                          {recs.nextWeeks.map((w, i) => (
+                            <div key={i} className="mb-3">
+                              <p className="font-bold text-purple-300 mb-1">{w.week}</p>
+                              {(w.tasks || []).map((t, j) => (
+                                <div key={j} className="ml-3 text-sm text-gray-200 mb-0.5">• {t}</div>
+                              ))}
+                            </div>
+                          ))}
+                        </div>
+                      }
                       gradient="from-cyan-600 to-teal-800"
                     />
                   )}
 
-                  {recs.leverage && (
+                  {recs.leverage && recs.leverage.length > 0 && (
                     <HoverCard 
                       icon="💎" 
                       title="High Impact" 
                       preview="Biggest opportunities"
-                      content={recs.leverage}
+                      content={
+                        <div>
+                          {recs.leverage.map((l, i) => (
+                            <div key={i} className="mb-2.5">
+                              <p className="font-semibold text-white text-sm">{l.item}</p>
+                              <p className="text-gray-300 text-sm">{l.why}</p>
+                            </div>
+                          ))}
+                        </div>
+                      }
                       gradient="from-indigo-600 to-purple-800"
                     />
                   )}
@@ -555,12 +650,21 @@ export default function AcademicAgent() {
                     />
                   )}
                   
-                  {recs.schedule && (
+                  {recs.schedule && recs.schedule.length > 0 && (
                     <HoverCard 
                       icon="🕐" 
                       title="Study Blocks" 
                       preview="This week's schedule"
-                      content={recs.schedule}
+                      content={
+                        <div>
+                          {recs.schedule.map((s, i) => (
+                            <div key={i} className="mb-2 text-sm">
+                              <span className="font-semibold text-white">{s.day} {s.date}, {s.time}</span>
+                              <div className="text-gray-300">{s.task}</div>
+                            </div>
+                          ))}
+                        </div>
+                      }
                       gradient="from-amber-600 to-orange-800"
                     />
                   )}
@@ -595,42 +699,76 @@ export default function AcademicAgent() {
                     />
                   )}
                   
-                  {recs.workloadBalance && (
+                  {recs.workloadBalance && recs.workloadBalance.length > 0 && (
                     <HoverCard 
                       icon="📊" 
                       title="Workload Balance" 
                       preview="Weekly distribution"
-                      content={recs.workloadBalance}
+                      content={
+                        <div>
+                          {recs.workloadBalance.map((w, i) => (
+                            <div key={i} className="mb-2.5 text-sm">
+                              <span className="font-semibold text-white">{w.period}</span>
+                              <span className={'ml-2 px-2 py-0.5 rounded text-xs font-semibold ' + (w.load === 'heavy' ? 'bg-red-500/30 text-red-200' : w.load === 'light' ? 'bg-green-500/30 text-green-200' : 'bg-yellow-500/30 text-yellow-200')}>{w.load}</span>
+                              <div className="text-gray-300 mt-0.5">{w.note}</div>
+                            </div>
+                          ))}
+                        </div>
+                      }
                       gradient="from-teal-600 to-cyan-800"
                     />
                   )}
                   
-                  {recs.dependencies && (
+                  {recs.dependencies && recs.dependencies.length > 0 && (
                     <HoverCard 
                       icon="🔗" 
                       title="Dependencies" 
                       preview="Assignment order"
-                      content={recs.dependencies}
+                      content={
+                        <div>
+                          {recs.dependencies.map((dep, i) => (
+                            <div key={i} className="mb-2.5 text-sm">
+                              <div className="text-white font-medium">{dep.from} <span className="text-purple-300">→</span> {dep.to}</div>
+                              <div className="text-gray-300">{dep.note}</div>
+                            </div>
+                          ))}
+                        </div>
+                      }
                       gradient="from-orange-600 to-red-800"
                     />
                   )}
                   
-                  {recs.semesterStrategy && (
+                  {recs.semesterStrategy && recs.semesterStrategy.length > 0 && (
                     <HoverCard 
                       icon="🎓" 
                       title="Semester Strategy" 
                       preview="Long-term planning"
-                      content={recs.semesterStrategy}
+                      content={
+                        <div>
+                          {recs.semesterStrategy.map((p, i) => (
+                            <div key={i} className="mb-2.5">
+                              <p className="font-bold text-purple-300">{p.phase} <span className="text-gray-400 font-normal">({p.weeks})</span></p>
+                              <p className="text-sm text-gray-200">{p.focus}</p>
+                            </div>
+                          ))}
+                        </div>
+                      }
                       gradient="from-purple-600 to-indigo-800"
                     />
                   )}
                   
-                  {recs.cushionTracking && (
+                  {recs.cushionTracking && recs.cushionTracking.length > 0 && (
                     <HoverCard 
                       icon="📈" 
                       title="Grade Cushion" 
                       preview="Performance tracking"
-                      content={recs.cushionTracking}
+                      content={
+                        <div>
+                          {recs.cushionTracking.map((tip, i) => (
+                            <div key={i} className="mb-2 text-sm text-gray-200">• {tip}</div>
+                          ))}
+                        </div>
+                      }
                       gradient="from-emerald-600 to-green-800"
                     />
                   )}
@@ -702,7 +840,7 @@ export default function AcademicAgent() {
               <Calendar className="w-6 h-6 text-purple-400" />
               Semester Calendar & Study Schedule
             </h2>
-            <CalendarView courses={courses} context={context} />
+            <CalendarView courses={courses} context={context} recs={recs} />
           </div>
         )}
 
@@ -914,19 +1052,19 @@ function HoverCard({ icon, title, preview, content, gradient, pulse }) {
   const [isHovered, setIsHovered] = useState(false);
   
   const formatContent = (text) => {
-    if (title === 'Workload Balance' || title === 'Grade Cushion') {
-      return text.split('\n').map((line, i) => {
-        if (line.trim().startsWith('-') || line.trim().startsWith('•')) {
-          return <div key={i} className="ml-4 mb-2">{line}</div>;
-        } else if (line.trim().match(/^[A-Z][A-Za-z\s]+:/)) {
-          return <div key={i} className="font-bold mt-3 mb-1 text-purple-300">{line}</div>;
-        } else if (line.trim()) {
-          return <div key={i} className="mb-2">{line}</div>;
-        }
-        return <div key={i} className="mb-2"></div>;
-      });
+    if (typeof text !== 'string') {
+      return text;
     }
-    return <p className="text-gray-200 text-sm leading-relaxed whitespace-pre-wrap max-h-96 overflow-y-auto">{content}</p>;
+    return text.split('\n').map((line, i) => {
+      if (line.trim().startsWith('-') || line.trim().startsWith('•')) {
+        return <div key={i} className="ml-4 mb-2">{line}</div>;
+      } else if (line.trim().match(/^[A-Z][A-Za-z\s]+:/)) {
+        return <div key={i} className="font-bold mt-3 mb-1 text-purple-300">{line}</div>;
+      } else if (line.trim()) {
+        return <div key={i} className="mb-2">{line}</div>;
+      }
+      return <div key={i} className="mb-2"></div>;
+    });
   };
   
   return (
@@ -955,7 +1093,7 @@ function HoverCard({ icon, title, preview, content, gradient, pulse }) {
   );
 }
 
-function CalendarView({ courses, context }) {
+function CalendarView({ courses, context, recs }) {
   const getWeekStart = (date) => {
     const d = new Date(date);
     d.setHours(0, 0, 0, 0);
@@ -965,6 +1103,16 @@ function CalendarView({ courses, context }) {
   const todayDate = new Date();
   const thisWeekStart = getWeekStart(todayDate);
 
+  const fmtShort = (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const weekLabelFor = (date) => {
+    const target = getWeekStart(date);
+    const diffDays = Math.round((target - thisWeekStart) / 864e5);
+    const weekNum = Math.floor(diffDays / 7) + 1;
+    const end = new Date(target);
+    end.setDate(target.getDate() + 6);
+    return 'Week ' + weekNum + ' (' + fmtShort(target) + '\u2013' + fmtShort(end) + ')';
+  };
+
   const [selectedWeek, setSelectedWeek] = useState(0);
   const [hoveredBlock, setHoveredBlock] = useState(null);
   
@@ -972,6 +1120,9 @@ function CalendarView({ courses, context }) {
   
   const currentWeekStart = new Date(thisWeekStart);
   currentWeekStart.setDate(thisWeekStart.getDate() + (selectedWeek * 7));
+
+  const currentWeekLabel = weekLabelFor(currentWeekStart);
+  const recommendedThisWeek = recs && recs.nextWeeks ? recs.nextWeeks.find(w => w.week === currentWeekLabel) : null;
   
   const days = [];
   for (let i = 0; i < 7; i++) {
@@ -992,6 +1143,33 @@ function CalendarView({ courses, context }) {
     if (period.toUpperCase() === 'AM' && hour === 12) return 0;
     return hour;
   };
+
+  // Parse the AI's recommended study blocks (recs.schedule) into actual
+  // dated, hour-ranged entries we can place on the grid, same way the
+  // fixed weekly schedule is parsed below.
+  const parseAiTimeRange = (timeStr) => {
+    if (!timeStr) return null;
+    const m = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?\D+(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+    if (!m) return null;
+    return {
+      startHour: convertTo24Hour(parseInt(m[1]), m[3] || m[6]),
+      endHour: convertTo24Hour(parseInt(m[4]), m[6])
+    };
+  };
+
+  const aiBlocksByDate = {};
+  if (recs && Array.isArray(recs.schedule)) {
+    recs.schedule.forEach(block => {
+      if (!block.date || !block.time) return;
+      const parsedDate = new Date(block.date + ' ' + currentWeekStart.getFullYear());
+      if (isNaN(parsedDate)) return;
+      const range = parseAiTimeRange(block.time);
+      if (!range) return;
+      const key = parsedDate.toDateString();
+      if (!aiBlocksByDate[key]) aiBlocksByDate[key] = [];
+      aiBlocksByDate[key].push({ ...range, task: block.task, time: block.time });
+    });
+  }
   
   const parseSchedule = () => {
     const schedule = {};
@@ -1056,6 +1234,7 @@ function CalendarView({ courses, context }) {
             }
           }
           
+          // A fixed class or office commitment always takes priority over an AI suggestion for the same slot.
           return { 
             type, 
             label: event.description.split('-')[0].trim().substring(0, 20),
@@ -1063,6 +1242,18 @@ function CalendarView({ courses, context }) {
           };
         }
       }
+    }
+
+    // No fixed commitment in this slot — check if the AI recommended a study block here.
+    const dayKey = day.toDateString();
+    const aiBlocks = aiBlocksByDate[dayKey] || [];
+    const aiMatch = aiBlocks.find(b => hour24 >= b.startHour && hour24 < b.endHour);
+    if (aiMatch) {
+      return {
+        type: 'recommended',
+        label: '✨ ' + aiMatch.task.substring(0, 18),
+        detail: 'Recommended: ' + aiMatch.task + '\n' + aiMatch.time
+      };
     }
     
     return { type: 'free', label: '', detail: '' };
@@ -1080,6 +1271,17 @@ function CalendarView({ courses, context }) {
         </div>
         <button onClick={() => setSelectedWeek(Math.min(16, selectedWeek + 1))} disabled={selectedWeek === 16} className="bg-purple-600 disabled:bg-gray-600 text-white px-4 py-2 rounded-lg transition-all hover:scale-105">Next →</button>
       </div>
+
+      {recommendedThisWeek && (
+        <div className="bg-amber-500/10 border border-amber-400/30 rounded-xl p-4">
+          <p className="text-amber-200 font-semibold text-sm mb-2">✨ Recommended focus for {recommendedThisWeek.week}</p>
+          <div className="flex flex-wrap gap-2">
+            {(recommendedThisWeek.tasks || []).map((t, i) => (
+              <span key={i} className="text-xs bg-amber-500/20 text-amber-100 px-2.5 py-1 rounded-full border border-amber-400/30">{t}</span>
+            ))}
+          </div>
+        </div>
+      )}
       
       <div className="bg-white/5 rounded-xl p-4 border border-purple-500/20 overflow-x-auto">
         <div className="grid grid-cols-8 gap-1 min-w-[1400px]">
@@ -1139,6 +1341,7 @@ function CalendarView({ courses, context }) {
                     blockInfo.type === 'class' ? 'bg-blue-600/30 border-blue-400 hover:bg-blue-600/50' :
                     blockInfo.type === 'study' ? 'bg-green-600/30 border-green-400 hover:bg-green-600/50' :
                     blockInfo.type === 'office' ? 'bg-purple-600/30 border-purple-400 hover:bg-purple-600/50' :
+                    blockInfo.type === 'recommended' ? 'bg-amber-500/25 border-amber-400 border-dashed hover:bg-amber-500/40' :
                     'bg-white/5 border-purple-500/10 hover:bg-white/10'
                   ) + (hoveredBlock === blockId ? ' scale-105 z-10 shadow-2xl' : '');
                   
@@ -1183,6 +1386,10 @@ function CalendarView({ courses, context }) {
         <div className="flex items-center gap-2">
           <div className="w-5 h-5 bg-red-600 rounded"></div>
           <span className="text-purple-300">Due Dates</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-5 h-5 bg-amber-500/25 border-2 border-dashed border-amber-400 rounded"></div>
+          <span className="text-purple-300">AI Recommended</span>
         </div>
       </div>
     </div>
