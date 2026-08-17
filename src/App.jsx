@@ -355,7 +355,8 @@ export default function AcademicAgent() {
         '1. WEEKS: Every pending assignment above already has a "weekLabel" field like "Week 3 (Sep 2\u2013Sep 8)". Always reuse these exact labels for any week reference. Never invent, calculate, or use absolute calendar week numbers (like "Week 34") \u2014 only the relative labels provided.\n' +
         '2. GRADE MATH: Do not calculate or mention grade percentages yourself \u2014 that is handled separately by the app using the exact if100/if90/if80/if70 numbers already in the data. Do not include grade math in any of your text fields.\n' +
         '3. NO FABRICATION: If SYLLABUS INFORMATION says "NONE PROVIDED", do not invent specific office hours, policies, or extra-credit opportunities. Instead say plainly that no syllabus has been uploaded yet for that course. Only state specifics that appear in the syllabus text above.\n' +
-        '4. PLANNING HORIZON: "nextWeeks" should cover every week from today through the planning horizon above (not just 2 weeks), so it reflects the whole current stretch of the semester with known deadlines.\n\n' +
+        '4. PLANNING HORIZON: "nextWeeks" should cover only the next 3-4 weeks in detail (the calendar/schedule field below already covers the full semester visually, so do not duplicate that here).\n' +
+        '5. LENGTH: Keep every field concise. "schedule" entries: 4-6 words per task, one block per week, not two. "semesterStrategy": 3-4 phases maximum, never one phase per week. "workloadBalance": group into a handful of ranges, never one entry per week. "risks" and "dependencies": 3 items maximum each.\n\n' +
         'Respond with JSON only (no markdown, no code fences):\n' +
         '{\n' +
         '  "top": "Assignment name and due date",\n' +
@@ -364,7 +365,7 @@ export default function AcademicAgent() {
         '  "nextWeeks": [{"week": "exact weekLabel from data", "tasks": ["short task (Xh)", "short task (Xh)"]}],\n' +
         '  "leverage": [{"item": "assignment name", "why": "one short sentence"}],\n' +
         '  "today": "One concrete action for today, with a time estimate",\n' +
-        '  "schedule": [{"day": "Monday", "date": "exact date like Aug 19", "time": "7:00 PM\u20139:00 PM", "task": "what to work on"}] (cover the FULL planning horizon above with 1-2 blocks per week, not just the immediate week \u2014 this populates the calendar across the whole semester),\n' +
+        '  "schedule": [{"day": "Monday", "date": "exact date like Aug 19", "time": "7:00 PM\u20139:00 PM", "task": "short task, 4-6 words"}] (one block per week across the FULL planning horizon above \u2014 this populates the calendar across the whole semester, so keep each entry brief),\n' +
         '  "office": "Office hours info FROM THE SYLLABUS ONLY, or a plain note that none was provided",\n' +
         '  "extra": "Extra credit FROM THE SYLLABUS ONLY, or a plain note that none was provided",\n' +
         '  "risks": ["short risk with a one-line prevention tip"],\n' +
@@ -379,8 +380,8 @@ export default function AcademicAgent() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           // model is set server-side in netlify/functions/ai-proxy.js
-          max_tokens: 3500,
-          // kept conservative to stay under Groq's free-tier 8000 TPM limit as course/syllabus data grows
+          max_tokens: 4200,
+          // trimmed prompt + tighter field limits above should comfortably fit under Groq's 8000 TPM cap now
           messages: [{ role: 'user', content: promptContent }]
         })
       });
@@ -421,7 +422,12 @@ export default function AcademicAgent() {
       }
       
       const text = d.content[0].text.trim().replace(/```json\n?/g, '').replace(/```\n?/g, '');
-      const parsedRecs = JSON.parse(text);
+      let parsedRecs;
+      try {
+        parsedRecs = JSON.parse(text);
+      } catch (parseErr) {
+        throw new Error('The response got cut off before finishing (this happens with a lot of assignments/courses at once). Try again \u2014 it usually completes fine on a retry.');
+      }
 
       // Match the AI's chosen top-priority assignment back to our own exact,
       // pre-calculated grade numbers. The AI never computes grade math itself.
