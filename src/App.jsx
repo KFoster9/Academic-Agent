@@ -340,8 +340,8 @@ export default function AcademicAgent() {
       
       const scheduleText = context.schedule || 'No schedule provided';
       const hasSyllabus = !!context.syllabi;
-      const syllabiText = hasSyllabus ? context.syllabi.substring(0, 2000) : 'No syllabus uploaded for this course yet.';
-      const pendingText = JSON.stringify(pending.slice(0, 15), null, 2);
+      const syllabiText = hasSyllabus ? context.syllabi.substring(0, 1000) : 'No syllabus uploaded for this course yet.';
+      const pendingText = JSON.stringify(pending.slice(0, 10), null, 2);
       const todayStr = today.toLocaleDateString();
       const lastDue = pending.reduce((max, a) => new Date(a.due) > new Date(max) ? a.due : max, pending[0].due);
       const lastWeekLabel = weekLabel(lastDue, thisWeekStart);
@@ -379,8 +379,8 @@ export default function AcademicAgent() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           // model is set server-side in netlify/functions/ai-proxy.js
-          max_tokens: 6000,
-          // widened schedule coverage needs more room than a single week did
+          max_tokens: 3500,
+          // kept conservative to stay under Groq's free-tier 8000 TPM limit as course/syllabus data grows
           messages: [{ role: 'user', content: promptContent }]
         })
       });
