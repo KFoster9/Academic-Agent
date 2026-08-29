@@ -351,12 +351,15 @@ export default function AcademicAgent() {
         'STUDENT SCHEDULE:\n' + scheduleText + '\n\n' +
         'SYLLABUS INFORMATION (' + (hasSyllabus ? 'provided' : 'NONE PROVIDED') + '):\n' + syllabiText + '\n\n' +
         'PENDING ASSIGNMENTS (includes pre-calculated week labels and exact grade-scenario numbers \u2014 use these values exactly, do not recompute):\n' + pendingText + '\n\n' +
+        'MISSION: This app exists to create urgency and intentional time use \u2014 not a passive summary. Think several moves ahead. Assume no room for error. The schedule you generate is the single most important output: it should make the student\'s available time feel fully and purposefully claimed, weighted toward what\'s genuinely urgent right now.\n\n' +
         'CRITICAL RULES:\n' +
         '1. WEEKS: Every pending assignment above already has a "weekLabel" field like "Week 3 (Sep 2\u2013Sep 8)". Always reuse these exact labels for any week reference. Never invent, calculate, or use absolute calendar week numbers (like "Week 34") \u2014 only the relative labels provided.\n' +
         '2. GRADE MATH: Do not calculate or mention grade percentages yourself \u2014 that is handled separately by the app using the exact if100/if90/if80/if70 numbers already in the data. Do not include grade math in any of your text fields.\n' +
         '3. NO FABRICATION: If SYLLABUS INFORMATION says "NONE PROVIDED", do not invent specific office hours, policies, or extra-credit opportunities. Instead say plainly that no syllabus has been uploaded yet for that course. Only state specifics that appear in the syllabus text above.\n' +
         '4. PLANNING HORIZON: "nextWeeks" should cover only the next 3-4 weeks in detail (the calendar/schedule field below already covers the full semester visually, so do not duplicate that here).\n' +
-        '5. LENGTH: Keep every field concise. "schedule" entries: 4-6 words per task, one block per week, not two. "semesterStrategy": 3-4 phases maximum, never one phase per week. "workloadBalance": group into a handful of ranges, never one entry per week. "risks" and "dependencies": 3 items maximum each.\n\n' +
+        '5. SCHEDULE DENSITY \u2014 URGENCY-WEIGHTED, NOT EVEN: for the next 2-3 weeks (the urgent horizon), generate 2-4 real work blocks per week, sized to the actual hours needed, spread across DIFFERENT days and times that make sense (evenings, weekends, gaps in the student\'s schedule) \u2014 never repeat the same day/time slot for every entry. For weeks beyond that near-term window, one lighter placeholder block per week is enough to keep the calendar populated across the semester without overloading detail this far out.\n' +
+        '6. NEVER SCHEDULE PAST A DEADLINE: once an assignment\'s due date has passed relative to a given week, do not generate any more blocks for that assignment \u2014 check each block\'s date against the assignment\'s due date before including it. Move on to the next relevant task instead.\n' +
+        '7. LENGTH: Keep every field concise. "semesterStrategy": 3-4 phases maximum, never one phase per week. "workloadBalance": group into a handful of ranges, never one entry per week. "risks" and "dependencies": 3 items maximum each.\n\n' +
         'Respond with JSON only (no markdown, no code fences):\n' +
         '{\n' +
         '  "top": "Assignment name and due date",\n' +
@@ -365,7 +368,7 @@ export default function AcademicAgent() {
         '  "nextWeeks": [{"week": "exact weekLabel from data", "tasks": ["short task (Xh)", "short task (Xh)"]}],\n' +
         '  "leverage": [{"item": "assignment name", "why": "one short sentence"}],\n' +
         '  "today": "One concrete action for today, with a time estimate",\n' +
-        '  "schedule": [{"day": "Monday", "date": "exact date like Aug 19", "time": "7:00 PM\u20139:00 PM", "task": "short task, 4-6 words"}] (one block per week across the FULL planning horizon above \u2014 this populates the calendar across the whole semester, so keep each entry brief),\n' +
+        '  "schedule": [{"day": "Monday", "date": "exact date like Aug 19", "time": "7:00 PM\u20139:00 PM", "task": "short task, 4-6 words"}] (dense, varied blocks for the urgent next 2-3 weeks; one lighter block per week beyond that, across the FULL planning horizon \u2014 see rules 5 and 6 above),\n' +
         '  "office": "Office hours info FROM THE SYLLABUS ONLY, or a plain note that none was provided",\n' +
         '  "extra": "Extra credit FROM THE SYLLABUS ONLY, or a plain note that none was provided",\n' +
         '  "risks": ["short risk with a one-line prevention tip"],\n' +
@@ -380,8 +383,8 @@ export default function AcademicAgent() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           // model is set server-side in netlify/functions/ai-proxy.js
-          max_tokens: 4200,
-          // trimmed prompt + tighter field limits above should comfortably fit under Groq's 8000 TPM cap now
+          max_tokens: 4500,
+          // urgency-weighted schedule needs a bit more room near-term; still comfortably under Groq's 8000 TPM cap
           messages: [{ role: 'user', content: promptContent }]
         })
       });
