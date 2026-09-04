@@ -381,12 +381,15 @@ export default function AcademicAgent() {
       const lastWeekLabel = weekLabel(lastDue, thisWeekStart);
 
       // Shared by both calls so each has the same picture of the semester
-      const sharedContext = 'You are an expert academic advisor. Today is ' + todayStr + ' (' + weekLabel(today.toISOString(), thisWeekStart) + ').\n\n' +
+      const todayDayName = today.toLocaleDateString('en-US', { weekday: 'long' });
+      const sharedContext = 'You are an expert academic advisor. Today is ' + todayDayName + ', ' + todayStr + ' (' + weekLabel(today.toISOString(), thisWeekStart) + ').\n\n' +
         'SEMESTER OVERVIEW:\n- Total Assignments: ' + totalAssignments + '\n- Completed: ' + completedCount + '\n- Remaining: ' + (totalAssignments - completedCount) + '\n- Planning horizon: today through ' + lastWeekLabel + ' (the last currently-known due date)\n\n' +
-        'STUDENT SCHEDULE:\n' + scheduleText + '\n\n' +
+        'STUDENT SCHEDULE (organized by day of week):\n' + scheduleText + '\n\n' +
         'SYLLABUS INFORMATION (' + (hasSyllabus ? 'provided' : 'NONE PROVIDED') + '):\n' + syllabiText + '\n\n' +
         'PENDING ASSIGNMENTS (includes pre-calculated week labels and exact grade-scenario numbers \u2014 use these values exactly, do not recompute):\n' + pendingText + '\n\n' +
-        'MISSION: This app exists to create urgency and intentional time use \u2014 not a passive summary. Think several moves ahead. Assume no room for error.\n\n';
+        'MISSION: This app exists to create urgency and intentional time use \u2014 not a passive summary. Think several moves ahead. Assume no room for error.\n\n' +
+        'CRITICAL \u2014 DAY MATCHING: Today is specifically ' + todayDayName + '. Before referencing "today" or "after class" in any field, look up ONLY the ' + todayDayName + ' entry in STUDENT SCHEDULE above. If ' + todayDayName + ' has no classes listed (or says "No Class"), do not reference a class time at all \u2014 say the day is open instead. Never pull a time from a different day of the week.\n\n';
+
 
       const callProxyWithRetry = async (body, onWaiting) => {
         const attempt = () => fetch('/.netlify/functions/ai-proxy', {
@@ -441,10 +444,20 @@ export default function AcademicAgent() {
         '  "risks": ["short risk with a one-line prevention tip"] (3 max),\n' +
         '  "cushionTracking": ["one short, concrete tip \u2014 e.g. current buffer or an early-warning sign. NOT generic advice like \\"make a spreadsheet\\" \u2014 the app already has a Grades tab for that."]\n' +
         '}';
-      const recsA = await callProxyWithRetry(
-        { max_tokens: 1400, messages: [{ role: 'user', content: promptA }] },
-        (s) => setLoadingStatus('Rate limit reached \u2014 retrying priorities in ' + s + 's...')
-      );
+      let recsA = {};
+      let recsB = {};
+      let partialErrors = [];
+
+      try {
+        const recsAResult = await callProxyWithRetry(
+          { max_tokens: 1400, messages: [{ role: 'user', content: promptA }] },
+          (s) => setLoadingStatus('Rate limit reached \u2014 retrying priorities in ' + s + 's...')
+        );
+        recsA = recsAResult;
+      } catch (errA) {
+        console.error('Call A failed:', errA);
+        partialErrors.push('Priorities: ' + errA.message);
+      }
 
       // CALL B: the semester-spanning schedule and planning fields \u2014 gets its own full budget
       setLoadingStatus('Building your semester schedule...');
@@ -452,7 +465,7 @@ export default function AcademicAgent() {
         'RULES:\n' +
         '1. WEEKS: Every pending assignment above already has a "weekLabel" field like "Week 3 (Sep 2\u2013Sep 8)". Always reuse these exact labels. Never invent, calculate, or use absolute calendar week numbers.\n' +
         '2. PLANNING HORIZON: "nextWeeks" should cover only the next 3-4 weeks in detail (the schedule field below already covers the full semester visually, so do not duplicate that here).\n' +
-        '3. SCHEDULE DENSITY \u2014 URGENCY-WEIGHTED, NOT EVEN: for the next 2-3 weeks (the urgent horizon), generate 2-4 real work blocks per week, sized to actual hours needed, spread across DIFFERENT days and times \u2014 never repeat the same day/time slot for every entry. Beyond that, one lighter placeholder block per week is enough to keep the calendar populated across the semester.\n' +
+        '3. SCHEDULE DENSITY \u2014 URGENCY-WEIGHTED, NOT EVEN: for the next 2-3 weeks (the urgent horizon), generate 2-4 real work blocks per week, sized to actual hours needed. Place them specifically in the student\'s genuinely open time \u2014 check STUDENT SCHEDULE for each day\'s class times and put blocks in the gaps: evenings after class ends, and especially full days marked "No Class" (use those aggressively, not just one slot). Never place a block during a listed class time. Never repeat the same day/time slot for every entry. Beyond the urgent horizon, one lighter placeholder block per week is enough to keep the calendar populated across the semester.\n' +
         '4. NEVER SCHEDULE PAST A DEADLINE: once an assignment\'s due date has passed relative to a given week, stop generating blocks for it \u2014 check each block\'s date against the due date first.\n' +
         '5. LENGTH: "semesterStrategy": 3-4 phases max, never one per week. "workloadBalance": a handful of ranges, never one entry per week. "dependencies": 3 items max.\n\n' +
         'Respond with JSON only (no markdown, no code fences):\n' +
@@ -464,12 +477,26 @@ export default function AcademicAgent() {
         '  "dependencies": [{"from": "assignment or task", "to": "assignment it feeds into", "note": "one short sentence"}],\n' +
         '  "semesterStrategy": [{"phase": "Phase 1", "weeks": "weekLabel range", "focus": "one short sentence"}]\n' +
         '}';
-      const recsB = await callProxyWithRetry(
-        { max_tokens: 4000, messages: [{ role: 'user', content: promptB }] },
-        (s) => setLoadingStatus('Rate limit reached \u2014 retrying schedule in ' + s + 's...')
-      );
+      try {
+        const recsBResult = await callProxyWithRetry(
+          { max_tokens: 4000, messages: [{ role: 'user', content: promptB }] },
+          (s) => setLoadingStatus('Rate limit reached \u2014 retrying schedule in ' + s + 's...')
+        );
+        recsB = recsBResult;
+      } catch (errB) {
+        console.error('Call B failed:', errB);
+        partialErrors.push('Schedule: ' + errB.message);
+      }
+
+      if (!Object.keys(recsA).length && !Object.keys(recsB).length) {
+        // Both calls failed \u2014 nothing to show, surface the error same as before
+        throw new Error(partialErrors.join(' | '));
+      }
 
       const parsedRecs = { ...recsA, ...recsB };
+      const partialNote = partialErrors.length
+        ? '\u26a0\ufe0f Part of this response didn\'t complete (' + partialErrors.join('; ') + '). Everything below is what did generate successfully \u2014 try again in a bit to fill in the rest.'
+        : '';
 
       // Match the AI's chosen top-priority assignment back to our own exact,
       // pre-calculated grade numbers. The AI never computes grade math itself.
@@ -501,7 +528,8 @@ export default function AcademicAgent() {
         workloadBalance: Array.isArray(parsedRecs.workloadBalance) ? parsedRecs.workloadBalance : [],
         dependencies: Array.isArray(parsedRecs.dependencies) ? parsedRecs.dependencies : [],
         semesterStrategy: Array.isArray(parsedRecs.semesterStrategy) ? parsedRecs.semesterStrategy : [],
-        cushionTracking: Array.isArray(parsedRecs.cushionTracking) ? parsedRecs.cushionTracking : []
+        cushionTracking: Array.isArray(parsedRecs.cushionTracking) ? parsedRecs.cushionTracking : [],
+        partialNote
       });
     } catch (e) {
       console.error('Recommendation Error:', e);
@@ -614,6 +642,12 @@ export default function AcademicAgent() {
                 </div>
               </div>
               {recs ? (
+                <div>
+                  {recs.partialNote && (
+                    <div className="mb-4 px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-sm">
+                      {recs.partialNote}
+                    </div>
+                  )}
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                   <HoverCard 
                     icon="🎯" 
@@ -826,6 +860,7 @@ export default function AcademicAgent() {
                       gradient="from-emerald-600 to-green-800"
                     />
                   )}
+                </div>
                 </div>
               ) : <p className="text-purple-300 text-center py-8">Add courses to get started</p>}
             </div>
@@ -1237,24 +1272,45 @@ function CalendarView({ courses, context, recs }) {
     let currentDay = '';
     
     lines.forEach(line => {
-      const dayMatch = line.match(/^(MONDAY|TUESDAY|WEDNESDAY|THURSDAY|FRIDAY|SATURDAY|SUNDAY):/i);
+      const dayMatch = line.match(/^(MONDAY|TUESDAY|WEDNESDAY|THURSDAY|FRIDAY|SATURDAY|SUNDAY)\s*:?/i);
       if (dayMatch) {
         currentDay = dayMatch[1].charAt(0) + dayMatch[1].slice(1).toLowerCase();
         schedule[currentDay] = [];
-      } else if (currentDay && line.trim()) {
-        const timeMatch = line.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?.*?-\s*(\d{1,2}):(\d{2})\s*(AM|PM)?.*?-\s*(.+)/i);
-        if (timeMatch) {
-          const startHour = timeMatch[1];
-          const startPeriod = timeMatch[3];
-          const endHour = timeMatch[4];
-          const endPeriod = timeMatch[6];
-          const description = timeMatch[7];
-          schedule[currentDay].push({
-            startHour: convertTo24Hour(parseInt(startHour), startPeriod),
-            endHour: convertTo24Hour(parseInt(endHour), endPeriod),
-            description: description.trim()
-          });
+        return;
+      }
+      if (!currentDay || !line.trim()) return;
+
+      // Natural format: "Course Name 12:40 - 2:00 PM" or "Course Name 9:40 - 11:00 AM"
+      const rangeMatch = line.match(/^(.+?)\s+(\d{1,2}):(\d{2})\s*(AM|PM)?\s*[-\u2013]\s*(\d{1,2}):(\d{2})\s*(AM|PM)?\s*$/i);
+      // Single time, no range: "Team Meeting for Business Orientation 7:00 PM"
+      const singleMatch = !rangeMatch && line.match(/^(.+?)\s+(\d{1,2}):(\d{2})\s*(AM|PM)\s*$/i);
+
+      if (rangeMatch) {
+        const description = rangeMatch[1].trim();
+        const startH = parseInt(rangeMatch[2]);
+        let startPeriod = rangeMatch[4];
+        const endH = parseInt(rangeMatch[5]);
+        const endPeriod = rangeMatch[7] || startPeriod;
+        if (!startPeriod && endPeriod) {
+          // Infer the start period: same as end, unless that would put start after end
+          // (e.g. "11:10 - 12:30 PM" crosses noon, so start must be AM)
+          const sameAsEnd = convertTo24Hour(startH, endPeriod);
+          const endHour24 = convertTo24Hour(endH, endPeriod);
+          startPeriod = sameAsEnd < endHour24 ? endPeriod : (endPeriod === 'PM' ? 'AM' : 'PM');
         }
+        schedule[currentDay].push({
+          startHour: convertTo24Hour(startH, startPeriod),
+          endHour: convertTo24Hour(endH, endPeriod),
+          description
+        });
+      } else if (singleMatch) {
+        const description = singleMatch[1].trim();
+        const startHour = convertTo24Hour(parseInt(singleMatch[2]), singleMatch[4]);
+        schedule[currentDay].push({
+          startHour,
+          endHour: startHour + 1,
+          description
+        });
       }
     });
     
@@ -1271,13 +1327,15 @@ function CalendarView({ courses, context, recs }) {
       for (const event of scheduleData[dayName]) {
         if (hour24 >= event.startHour && hour24 < event.endHour) {
           const desc = event.description.toLowerCase();
-          let type = 'free';
-          if (desc.includes('class') || desc.includes('lecture') || /[A-Z]{2,4}\s*\d{3}/.test(event.description)) {
-            type = 'class';
-          } else if (desc.includes('study') || desc.includes('work')) {
+          // Default to 'class' \u2014 a named commitment the student typed in is a real
+          // obligation unless it's explicitly a study/office/free slot.
+          let type = 'class';
+          if (desc.includes('study') || desc.includes('work on') || desc.includes('homework')) {
             type = 'study';
-          } else if (desc.includes('office')) {
+          } else if (desc.includes('office hour')) {
             type = 'office';
+          } else if (desc.includes('free') || desc.includes('break')) {
+            type = 'free';
           }
           
           let detail = event.description;
@@ -1295,7 +1353,7 @@ function CalendarView({ courses, context, recs }) {
           // A fixed class or office commitment always takes priority over an AI suggestion for the same slot.
           return { 
             type, 
-            label: event.description.split('-')[0].trim().substring(0, 20),
+            label: event.description.substring(0, 20),
             detail 
           };
         }
