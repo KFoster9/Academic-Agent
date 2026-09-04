@@ -196,7 +196,7 @@ export default function AcademicAgent() {
     
     try {
       const today = new Date();
-      const pending = courses.flatMap(c => c.assignments.filter(a => a.status !== 'completed').map(a => {
+      const pending = courses.flatMap(c => c.assignments.filter(a => a.status !== 'completed' && a.status !== 'submitted').map(a => {
         const daysUntil = Math.ceil((new Date(a.dueDate) - today) / 864e5);
         return {
           id: a.id,
@@ -327,7 +327,7 @@ export default function AcademicAgent() {
     setLoadingStatus('');
     const today = new Date();
     const thisWeekStart = getWeekStart(today);
-    const pending = courses.flatMap(c => c.assignments.filter(a => a.status !== 'completed').map(a => {
+    const pending = courses.flatMap(c => c.assignments.filter(a => a.status !== 'completed' && a.status !== 'submitted').map(a => {
       const imp = calcImpact(c, a);
       const daysUntil = Math.ceil((new Date(a.dueDate) - today) / 864e5);
       return {
@@ -462,13 +462,13 @@ export default function AcademicAgent() {
 
       // CALL B: the semester-spanning schedule and planning fields \u2014 gets its own full budget
       setLoadingStatus('Building your semester schedule...');
-      const promptB = sharedContext +
+      const buildPromptB = (reduced) => sharedContext +
         'RULES:\n' +
         '1. WEEKS: Every pending assignment above already has a "weekLabel" field like "Week 3 (Sep 2\u2013Sep 8)". Always reuse these exact labels. Never invent, calculate, or use absolute calendar week numbers.\n' +
-        '2. PLANNING HORIZON: "nextWeeks" should cover only the next 3-4 weeks in detail (the schedule field below already covers the full semester visually, so do not duplicate that here).\n' +
-        '3. SCHEDULE DENSITY \u2014 URGENCY-WEIGHTED, NOT EVEN: for the next 2-3 weeks (the urgent horizon), generate 2-4 real work blocks per week, sized to actual hours needed. Place them specifically in the student\'s genuinely open time \u2014 check STUDENT SCHEDULE for each day\'s class times and put blocks in the gaps: evenings after class ends, and especially full days marked "No Class" (use those aggressively, not just one slot). Never place a block during a listed class time. Never repeat the same day/time slot for every entry. Beyond the urgent horizon, one lighter placeholder block per week is enough to keep the calendar populated across the semester.\n' +
+        '2. PLANNING HORIZON: "nextWeeks" should cover only the next ' + (reduced ? '2 weeks' : '3-4 weeks') + ' in detail (the schedule field below already covers the full semester visually, so do not duplicate that here).\n' +
+        '3. SCHEDULE DENSITY \u2014 URGENCY-WEIGHTED, NOT EVEN: for the next ' + (reduced ? '2 weeks only' : '2-3 weeks (the urgent horizon)') + ', generate ' + (reduced ? '2-3' : '2-4') + ' real work blocks per week, sized to actual hours needed. Place them specifically in the student\'s genuinely open time \u2014 check STUDENT SCHEDULE for each day\'s class times and put blocks in the gaps: evenings after class ends, and especially full days marked "No Class" (use those aggressively, not just one slot). Never place a block during a listed class time. Never repeat the same day/time slot for every entry.' + (reduced ? ' Do not generate anything beyond these 2 weeks \u2014 keep this short.' : ' Beyond the urgent horizon, one lighter placeholder block per week is enough to keep the calendar populated across the semester.') + '\n' +
         '4. NEVER SCHEDULE PAST A DEADLINE: once an assignment\'s due date has passed relative to a given week, stop generating blocks for it \u2014 check each block\'s date against the due date first.\n' +
-        '5. LENGTH: "semesterStrategy": 3-4 phases max, never one per week. "workloadBalance": a handful of ranges, never one entry per week. "dependencies": 3 items max.\n\n' +
+        '5. LENGTH: keep everything brief.' + (reduced ? ' "semesterStrategy": 2 phases max. "workloadBalance": 2 entries max. "dependencies": 2 items max. "leverage": 2 items max.' : ' "semesterStrategy": 3-4 phases max, never one per week. "workloadBalance": a handful of ranges, never one entry per week. "dependencies": 3 items max.') + '\n\n' +
         'Respond with JSON only (no markdown, no code fences):\n' +
         '{\n' +
         '  "nextWeeks": [{"week": "exact weekLabel from data", "tasks": ["short task (Xh)", "short task (Xh)"]}],\n' +
@@ -480,13 +480,23 @@ export default function AcademicAgent() {
         '}';
       try {
         const recsBResult = await callProxyWithRetry(
-          { max_tokens: 4000, messages: [{ role: 'user', content: promptB }] },
+          { max_tokens: 4000, messages: [{ role: 'user', content: buildPromptB(false) }] },
           (s) => setLoadingStatus('Rate limit reached \u2014 retrying schedule in ' + s + 's...')
         );
         recsB = recsBResult;
       } catch (errB) {
-        console.error('Call B failed:', errB);
-        partialErrors.push('Schedule: ' + errB.message);
+        console.error('Call B (full) failed, trying a smaller version:', errB);
+        setLoadingStatus('That was too much detail \u2014 retrying with a shorter schedule...');
+        try {
+          const recsBRetry = await callProxyWithRetry(
+            { max_tokens: 2200, messages: [{ role: 'user', content: buildPromptB(true) }] },
+            (s) => setLoadingStatus('Rate limit reached \u2014 retrying schedule in ' + s + 's...')
+          );
+          recsB = recsBRetry;
+        } catch (errB2) {
+          console.error('Call B (reduced) also failed:', errB2);
+          partialErrors.push('Schedule: ' + errB2.message);
+        }
       }
 
       if (!Object.keys(recsA).length && !Object.keys(recsB).length) {
@@ -1116,10 +1126,14 @@ function CourseCard({ course, onAddAssignment, onUpdateStatus, onUpdateScore, on
             <select value={a.status} onChange={(e) => onUpdateStatus(course.id, a.id, e.target.value)} className="bg-purple-600/30 text-white px-3 py-1 rounded text-sm border border-purple-500/30">
               <option value="not_started">Not Started</option>
               <option value="in_progress">In Progress</option>
-              <option value="completed">Completed</option>
+              <option value="submitted">Submitted (Awaiting Grade)</option>
+              <option value="completed">Completed (Graded)</option>
             </select>
             {a.status === 'completed' && <input type="number" placeholder="Score %" value={a.score || ''} onChange={(e) => onUpdateScore(course.id, a.id, e.target.value)} className="w-24 px-3 py-1 rounded bg-white/10 text-white text-sm border border-purple-500/30" />}
           </div>
+          {a.status === 'submitted' && (
+            <p className="text-xs text-purple-300 mt-1 italic">Turned in, waiting on a grade \u2014 won't count in grade calculations until scored.</p>
+          )}
         </div>
       ))}
 
@@ -1322,7 +1336,7 @@ function CalendarView({ courses, context, recs }) {
   
   const getBlockInfo = (day, hour24) => {
     const dayName = day.toLocaleDateString('en-US', { weekday: 'long' });
-    const pending = courses.flatMap(c => c.assignments.filter(a => a.status !== 'completed')).sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+    const pending = courses.flatMap(c => c.assignments.filter(a => a.status !== 'completed' && a.status !== 'submitted')).sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
     
     if (scheduleData[dayName]) {
       for (const event of scheduleData[dayName]) {
