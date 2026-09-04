@@ -6,11 +6,13 @@ export default function AcademicAgent() {
   const [context, setContext] = useState({ schedule: '', syllabi: '' });
   const [recs, setRecs] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [loadingStatus, setLoadingStatus] = useState('');
   const [tab, setTab] = useState('overview');
   const [chatOpen, setChatOpen] = useState(false);
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
+  const [chatStatus, setChatStatus] = useState('');
   const [uploadingSyllabus, setUploadingSyllabus] = useState(false);
   const chatContainerRef = React.useRef(null);
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
@@ -44,7 +46,7 @@ export default function AcademicAgent() {
     try {
       const text = await file.text();
       
-      const res = await fetch('/.netlify/functions/ai-proxy', {
+      const callProxy = () => fetch('/.netlify/functions/ai-proxy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -57,13 +59,26 @@ export default function AcademicAgent() {
         })
       });
 
+      let res = await callProxy();
+
+      if (res.status === 429) {
+        let retryAfterSeconds = 15;
+        try {
+          const errBody = await res.clone().json();
+          if (typeof errBody?.retryAfterSeconds === 'number') retryAfterSeconds = errBody.retryAfterSeconds;
+        } catch (e) {}
+        showToast('Rate limit reached \u2014 retrying automatically in ' + (Math.ceil(retryAfterSeconds) + 2) + 's...', 'error');
+        await new Promise(r => setTimeout(r, (Math.ceil(retryAfterSeconds) + 2) * 1000));
+        res = await callProxy();
+      }
+
       if (!res.ok) {
         let detail = '';
         try {
           const errBody = await res.json();
           detail = errBody?.error?.message || '';
         } catch (e) {}
-        throw new Error('API returned status ' + res.status + (detail ? (': ' + detail) : ''));
+        throw new Error('status ' + res.status + (detail ? (': ' + detail) : ''));
       }
 
       const data = await res.json();
@@ -77,7 +92,7 @@ export default function AcademicAgent() {
       showToast('Syllabus uploaded and parsed successfully!', 'success');
     } catch (err) {
       console.error('Upload error:', err);
-      showToast('Error uploading syllabus. Please try again.', 'error');
+      showToast('Error uploading syllabus: ' + (err?.message || 'unknown error'), 'error');
     }
     
     setUploadingSyllabus(false);
@@ -176,6 +191,7 @@ export default function AcademicAgent() {
     setChatMessages(newMessages);
     setChatInput('');
     setChatLoading(true);
+    setChatStatus('');
     
     try {
       const today = new Date();
@@ -214,7 +230,7 @@ export default function AcademicAgent() {
         content: msg.content
       }));
       
-      const res = await fetch('/.netlify/functions/ai-proxy', {
+      const callProxy = () => fetch('/.netlify/functions/ai-proxy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -224,6 +240,21 @@ export default function AcademicAgent() {
           messages: conversationHistory
         })
       });
+
+      let res = await callProxy();
+
+      if (res.status === 429) {
+        let retryAfterSeconds = 15;
+        try {
+          const errBody = await res.clone().json();
+          if (typeof errBody?.retryAfterSeconds === 'number') retryAfterSeconds = errBody.retryAfterSeconds;
+        } catch (e) {}
+        const waitSeconds = Math.ceil(retryAfterSeconds) + 2;
+        setChatStatus('Rate limit reached \u2014 retrying in ' + waitSeconds + 's...');
+        await new Promise(r => setTimeout(r, waitSeconds * 1000));
+        setChatStatus('');
+        res = await callProxy();
+      }
 
       if (!res.ok) {
         let detail = '';
@@ -268,6 +299,7 @@ export default function AcademicAgent() {
       setChatMessages([...newMessages, { role: 'assistant', content: 'Sorry, I encountered an error: ' + (e?.message || 'unknown error') + '. Please try again.' }]);
     }
     
+    setChatStatus('');
     setChatLoading(false);
   };
 
@@ -291,6 +323,7 @@ export default function AcademicAgent() {
 
   const getRecs = async () => {
     setLoading(true);
+    setLoadingStatus('');
     const today = new Date();
     const thisWeekStart = getWeekStart(today);
     const pending = courses.flatMap(c => c.assignments.filter(a => a.status !== 'completed').map(a => {
@@ -329,6 +362,7 @@ export default function AcademicAgent() {
         semesterStrategy: [],
         cushionTracking: []
       });
+      setLoadingStatus('');
       setLoading(false);
       return;
     }
@@ -345,92 +379,97 @@ export default function AcademicAgent() {
       const todayStr = today.toLocaleDateString();
       const lastDue = pending.reduce((max, a) => new Date(a.due) > new Date(max) ? a.due : max, pending[0].due);
       const lastWeekLabel = weekLabel(lastDue, thisWeekStart);
-      
-      const promptContent = 'You are an expert academic advisor. Today is ' + todayStr + ' (' + weekLabel(today.toISOString(), thisWeekStart) + ').\n\n' +
+
+      // Shared by both calls so each has the same picture of the semester
+      const sharedContext = 'You are an expert academic advisor. Today is ' + todayStr + ' (' + weekLabel(today.toISOString(), thisWeekStart) + ').\n\n' +
         'SEMESTER OVERVIEW:\n- Total Assignments: ' + totalAssignments + '\n- Completed: ' + completedCount + '\n- Remaining: ' + (totalAssignments - completedCount) + '\n- Planning horizon: today through ' + lastWeekLabel + ' (the last currently-known due date)\n\n' +
         'STUDENT SCHEDULE:\n' + scheduleText + '\n\n' +
         'SYLLABUS INFORMATION (' + (hasSyllabus ? 'provided' : 'NONE PROVIDED') + '):\n' + syllabiText + '\n\n' +
         'PENDING ASSIGNMENTS (includes pre-calculated week labels and exact grade-scenario numbers \u2014 use these values exactly, do not recompute):\n' + pendingText + '\n\n' +
-        'MISSION: This app exists to create urgency and intentional time use \u2014 not a passive summary. Think several moves ahead. Assume no room for error. The schedule you generate is the single most important output: it should make the student\'s available time feel fully and purposefully claimed, weighted toward what\'s genuinely urgent right now.\n\n' +
-        'CRITICAL RULES:\n' +
-        '1. WEEKS: Every pending assignment above already has a "weekLabel" field like "Week 3 (Sep 2\u2013Sep 8)". Always reuse these exact labels for any week reference. Never invent, calculate, or use absolute calendar week numbers (like "Week 34") \u2014 only the relative labels provided.\n' +
-        '2. GRADE MATH: Do not calculate or mention grade percentages yourself \u2014 that is handled separately by the app using the exact if100/if90/if80/if70 numbers already in the data. Do not include grade math in any of your text fields.\n' +
-        '3. NO FABRICATION: If SYLLABUS INFORMATION says "NONE PROVIDED", do not invent specific office hours, policies, or extra-credit opportunities. Instead say plainly that no syllabus has been uploaded yet for that course. Only state specifics that appear in the syllabus text above.\n' +
-        '4. PLANNING HORIZON: "nextWeeks" should cover only the next 3-4 weeks in detail (the calendar/schedule field below already covers the full semester visually, so do not duplicate that here).\n' +
-        '5. SCHEDULE DENSITY \u2014 URGENCY-WEIGHTED, NOT EVEN: for the next 2-3 weeks (the urgent horizon), generate 2-4 real work blocks per week, sized to the actual hours needed, spread across DIFFERENT days and times that make sense (evenings, weekends, gaps in the student\'s schedule) \u2014 never repeat the same day/time slot for every entry. For weeks beyond that near-term window, one lighter placeholder block per week is enough to keep the calendar populated across the semester without overloading detail this far out.\n' +
-        '6. NEVER SCHEDULE PAST A DEADLINE: once an assignment\'s due date has passed relative to a given week, do not generate any more blocks for that assignment \u2014 check each block\'s date against the assignment\'s due date before including it. Move on to the next relevant task instead.\n' +
-        '7. LENGTH: Keep every field concise. "semesterStrategy": 3-4 phases maximum, never one phase per week. "workloadBalance": group into a handful of ranges, never one entry per week. "risks" and "dependencies": 3 items maximum each.\n\n' +
+        'MISSION: This app exists to create urgency and intentional time use \u2014 not a passive summary. Think several moves ahead. Assume no room for error.\n\n';
+
+      const callProxyWithRetry = async (body, onWaiting) => {
+        const attempt = () => fetch('/.netlify/functions/ai-proxy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        let res = await attempt();
+        if (res.status === 429) {
+          let retryAfterSeconds = 15;
+          try {
+            const errBody = await res.clone().json();
+            if (typeof errBody?.retryAfterSeconds === 'number') retryAfterSeconds = errBody.retryAfterSeconds;
+          } catch (e) {}
+          const waitSeconds = Math.ceil(retryAfterSeconds) + 2;
+          if (onWaiting) onWaiting(waitSeconds);
+          await new Promise(r => setTimeout(r, waitSeconds * 1000));
+          res = await attempt();
+        }
+        if (!res.ok) {
+          let detail = '';
+          try {
+            const errBody = await res.json();
+            detail = errBody?.error?.message || '';
+          } catch (e) {}
+          throw new Error('API returned status ' + res.status + (detail ? (': ' + detail) : ''));
+        }
+        const d = await res.json();
+        if (d.error) throw new Error(d.error.message || 'API error occurred');
+        const text = d.content[0].text.trim().replace(/```json\n?/g, '').replace(/```\n?/g, '');
+        try {
+          return JSON.parse(text);
+        } catch (parseErr) {
+          throw new Error('The response got cut off before finishing. Try again \u2014 it usually completes fine on a retry.');
+        }
+      };
+
+      // CALL A: fast, immediate-priority fields \u2014 small budget, low truncation risk
+      setLoadingStatus('Getting priorities...');
+      const promptA = sharedContext +
+        'RULES:\n' +
+        '- Do not calculate or mention grade percentages yourself \u2014 that is handled separately using exact pre-calculated numbers. Do not include grade math in any text field.\n' +
+        '- If SYLLABUS INFORMATION says "NONE PROVIDED", do not invent office hours, policies, or extra-credit \u2014 say plainly that no syllabus has been uploaded yet.\n\n' +
         'Respond with JSON only (no markdown, no code fences):\n' +
         '{\n' +
         '  "top": "Assignment name and due date",\n' +
         '  "reason": "Why this is priority \u2014 urgency and effort, no grade math",\n' +
         '  "comparative": "Brief comparison to the next 1-2 highest-priority items, no grade math",\n' +
-        '  "nextWeeks": [{"week": "exact weekLabel from data", "tasks": ["short task (Xh)", "short task (Xh)"]}],\n' +
-        '  "leverage": [{"item": "assignment name", "why": "one short sentence"}],\n' +
         '  "today": "One concrete action for today, with a time estimate",\n' +
-        '  "schedule": [{"day": "Monday", "date": "exact date like Aug 19", "time": "7:00 PM\u20139:00 PM", "task": "short task, 4-6 words"}] (dense, varied blocks for the urgent next 2-3 weeks; one lighter block per week beyond that, across the FULL planning horizon \u2014 see rules 5 and 6 above),\n' +
         '  "office": "Office hours info FROM THE SYLLABUS ONLY, or a plain note that none was provided",\n' +
         '  "extra": "Extra credit FROM THE SYLLABUS ONLY, or a plain note that none was provided",\n' +
-        '  "risks": ["short risk with a one-line prevention tip"],\n' +
-        '  "workloadBalance": [{"period": "exact weekLabel or range of weekLabels", "load": "light|moderate|heavy", "note": "why, one short sentence"}],\n' +
-        '  "dependencies": [{"from": "assignment or task", "to": "assignment it feeds into", "note": "one short sentence"}],\n' +
-        '  "semesterStrategy": [{"phase": "Phase 1", "weeks": "weekLabel range", "focus": "one short sentence"}],\n' +
-        '  "cushionTracking": ["one short, concrete tip \u2014 e.g. how much buffer the student currently has, or a specific early-warning sign to watch for. NOT generic advice like \\"make a spreadsheet\\" \u2014 the app already has a Grades tab that tracks this precisely, so these tips should add insight, not suggest rebuilding that."]\n' +
+        '  "risks": ["short risk with a one-line prevention tip"] (3 max),\n' +
+        '  "cushionTracking": ["one short, concrete tip \u2014 e.g. current buffer or an early-warning sign. NOT generic advice like \\"make a spreadsheet\\" \u2014 the app already has a Grades tab for that."]\n' +
         '}';
-      
-      const res = await fetch('/.netlify/functions/ai-proxy', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          // model is set server-side in netlify/functions/ai-proxy.js
-          max_tokens: 4500,
-          // urgency-weighted schedule needs a bit more room near-term; still comfortably under Groq's 8000 TPM cap
-          messages: [{ role: 'user', content: promptContent }]
-        })
-      });
+      const recsA = await callProxyWithRetry(
+        { max_tokens: 1400, messages: [{ role: 'user', content: promptA }] },
+        (s) => setLoadingStatus('Rate limit reached \u2014 retrying priorities in ' + s + 's...')
+      );
 
-      if (!res.ok) {
-        let detail = '';
-        try {
-          const errBody = await res.json();
-          detail = errBody?.error?.message || '';
-        } catch (e) {}
-        throw new Error('API returned status ' + res.status + (detail ? (': ' + detail) : ''));
-      }
-      
-      const d = await res.json();
-      
-      if (d.error) {
-        console.error('API Error:', d.error);
-        const errorMessage = d.error.message || 'API error occurred';
-        setRecs({ 
-          top: 'Error', 
-          reason: errorMessage,
-          gradeImpactData: null,
-          comparative: '',
-          nextWeeks: [],
-          today: '',
-          schedule: [],
-          office: '',
-          extra: '',
-          risks: [],
-          leverage: [],
-          workloadBalance: [],
-          dependencies: [],
-          semesterStrategy: [],
-          cushionTracking: []
-        });
-        setLoading(false);
-        return;
-      }
-      
-      const text = d.content[0].text.trim().replace(/```json\n?/g, '').replace(/```\n?/g, '');
-      let parsedRecs;
-      try {
-        parsedRecs = JSON.parse(text);
-      } catch (parseErr) {
-        throw new Error('The response got cut off before finishing (this happens with a lot of assignments/courses at once). Try again \u2014 it usually completes fine on a retry.');
-      }
+      // CALL B: the semester-spanning schedule and planning fields \u2014 gets its own full budget
+      setLoadingStatus('Building your semester schedule...');
+      const promptB = sharedContext +
+        'RULES:\n' +
+        '1. WEEKS: Every pending assignment above already has a "weekLabel" field like "Week 3 (Sep 2\u2013Sep 8)". Always reuse these exact labels. Never invent, calculate, or use absolute calendar week numbers.\n' +
+        '2. PLANNING HORIZON: "nextWeeks" should cover only the next 3-4 weeks in detail (the schedule field below already covers the full semester visually, so do not duplicate that here).\n' +
+        '3. SCHEDULE DENSITY \u2014 URGENCY-WEIGHTED, NOT EVEN: for the next 2-3 weeks (the urgent horizon), generate 2-4 real work blocks per week, sized to actual hours needed, spread across DIFFERENT days and times \u2014 never repeat the same day/time slot for every entry. Beyond that, one lighter placeholder block per week is enough to keep the calendar populated across the semester.\n' +
+        '4. NEVER SCHEDULE PAST A DEADLINE: once an assignment\'s due date has passed relative to a given week, stop generating blocks for it \u2014 check each block\'s date against the due date first.\n' +
+        '5. LENGTH: "semesterStrategy": 3-4 phases max, never one per week. "workloadBalance": a handful of ranges, never one entry per week. "dependencies": 3 items max.\n\n' +
+        'Respond with JSON only (no markdown, no code fences):\n' +
+        '{\n' +
+        '  "nextWeeks": [{"week": "exact weekLabel from data", "tasks": ["short task (Xh)", "short task (Xh)"]}],\n' +
+        '  "leverage": [{"item": "assignment name", "why": "one short sentence"}],\n' +
+        '  "schedule": [{"day": "Monday", "date": "exact date like Aug 19", "time": "7:00 PM\u20139:00 PM", "task": "short task, 4-6 words"}],\n' +
+        '  "workloadBalance": [{"period": "exact weekLabel or range", "load": "light|moderate|heavy", "note": "why, one short sentence"}],\n' +
+        '  "dependencies": [{"from": "assignment or task", "to": "assignment it feeds into", "note": "one short sentence"}],\n' +
+        '  "semesterStrategy": [{"phase": "Phase 1", "weeks": "weekLabel range", "focus": "one short sentence"}]\n' +
+        '}';
+      const recsB = await callProxyWithRetry(
+        { max_tokens: 4000, messages: [{ role: 'user', content: promptB }] },
+        (s) => setLoadingStatus('Rate limit reached \u2014 retrying schedule in ' + s + 's...')
+      );
+
+      const parsedRecs = { ...recsA, ...recsB };
 
       // Match the AI's chosen top-priority assignment back to our own exact,
       // pre-calculated grade numbers. The AI never computes grade math itself.
@@ -485,6 +524,7 @@ export default function AcademicAgent() {
         cushionTracking: []
       });
     }
+    setLoadingStatus('');
     setLoading(false);
   };
 
@@ -562,11 +602,16 @@ export default function AcademicAgent() {
         {tab === 'overview' && (
           <div className="space-y-6">
             <div className="bg-white/10 rounded-xl p-6 border border-purple-500/30">
-              <div className="flex justify-between mb-4">
+              <div className="flex justify-between items-center mb-4">
                 <h2 className="text-2xl font-bold text-white">Recommendations</h2>
-                <button onClick={getRecs} disabled={loading || !courses.length} className="bg-purple-600 text-white px-6 py-2 rounded-lg">
-                  {loading ? 'Analyzing...' : 'Get Recommendations'}
-                </button>
+                <div className="flex items-center gap-3">
+                  {loading && loadingStatus && (
+                    <span className="text-amber-300 text-xs max-w-[220px] text-right">{loadingStatus}</span>
+                  )}
+                  <button onClick={getRecs} disabled={loading || !courses.length} className="bg-purple-600 text-white px-6 py-2 rounded-lg whitespace-nowrap">
+                    {loading ? (loadingStatus ? 'Waiting...' : 'Analyzing...') : 'Get Recommendations'}
+                  </button>
+                </div>
               </div>
               {recs ? (
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
@@ -948,11 +993,15 @@ export default function AcademicAgent() {
               {chatLoading && (
                 <div className="flex justify-start">
                   <div className="bg-white/10 border border-purple-500/30 rounded-2xl px-4 py-2">
-                    <div className="flex gap-1">
-                      <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce"></div>
-                      <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{animationDelay: '150ms'}}></div>
-                      <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{animationDelay: '300ms'}}></div>
-                    </div>
+                    {chatStatus ? (
+                      <p className="text-amber-300 text-xs">{chatStatus}</p>
+                    ) : (
+                      <div className="flex gap-1">
+                        <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce"></div>
+                        <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{animationDelay: '150ms'}}></div>
+                        <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{animationDelay: '300ms'}}></div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
