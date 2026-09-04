@@ -148,7 +148,8 @@ export default function AcademicAgent() {
   };
 
   const updateScore = (cid, aid, score) => {
-    save(courses.map(c => c.id === cid ? { ...c, assignments: c.assignments.map(a => a.id === aid ? { ...a, score: Number(score) } : a) } : c));
+    const numScore = (score === '' || isNaN(Number(score))) ? null : Number(score);
+    save(courses.map(c => c.id === cid ? { ...c, assignments: c.assignments.map(a => a.id === aid ? { ...a, score: numScore } : a) } : c));
   };
 
   const deleteCourse = (id) => save(courses.filter(c => c.id !== id));
